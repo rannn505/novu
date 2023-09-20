@@ -15,4 +15,5 @@ export {
   StandardQueueService,
   WebSocketsQueueService,
   WorkflowQueueService,
+  InboundParseQueueService,
 };

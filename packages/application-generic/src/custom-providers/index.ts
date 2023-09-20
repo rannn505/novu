@@ -6,11 +6,11 @@ import {
   FeatureFlagsService,
   InMemoryProviderEnum,
   InMemoryProviderService,
-  ReadinessService,
   OldInstanceBullMqService,
   StandardQueueService,
   WebSocketsQueueService,
   WorkflowQueueService,
+  InboundParseQueueService,
 } from '../services';
 import {
   GetIsMultiProviderConfigurationEnabled,
@@ -133,9 +133,20 @@ export const bullMqTokenList = {
   useFactory: (
     standardQueueService: StandardQueueService,
     webSocketsQueueService: WebSocketsQueueService,
-    workflowQueueService: WorkflowQueueService
+    workflowQueueService: WorkflowQueueService,
+    inboundParseQueueService: InboundParseQueueService
   ) => {
-    return [standardQueueService, webSocketsQueueService, workflowQueueService];
+    return [
+      standardQueueService,
+      webSocketsQueueService,
+      workflowQueueService,
+      inboundParseQueueService,
+    ];
   },
-  inject: [StandardQueueService, WebSocketsQueueService, WorkflowQueueService],
+  inject: [
+    StandardQueueService,
+    WebSocketsQueueService,
+    WorkflowQueueService,
+    InboundParseQueueService,
+  ],
 };
