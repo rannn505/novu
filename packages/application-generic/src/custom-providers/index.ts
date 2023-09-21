@@ -10,7 +10,7 @@ import {
   StandardQueueService,
   WebSocketsQueueService,
   WorkflowQueueService,
-  InboundParseQueueService,
+  InboundParseQueueService as InboundQueueService,
 } from '../services';
 import {
   GetIsMultiProviderConfigurationEnabled,
@@ -134,7 +134,7 @@ export const bullMqTokenList = {
     standardQueueService: StandardQueueService,
     webSocketsQueueService: WebSocketsQueueService,
     workflowQueueService: WorkflowQueueService,
-    inboundParseQueueService: InboundParseQueueService
+    inboundParseQueueService: InboundQueueService
   ) => {
     return [
       standardQueueService,
@@ -147,6 +147,6 @@ export const bullMqTokenList = {
     StandardQueueService,
     WebSocketsQueueService,
     WorkflowQueueService,
-    InboundParseQueueService,
+    InboundQueueService,
   ],
 };
