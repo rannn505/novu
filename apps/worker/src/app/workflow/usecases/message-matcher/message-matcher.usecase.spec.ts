@@ -12,709 +12,770 @@ import {
   StepTypeEnum,
   TimeOperatorEnum,
 } from '@novu/shared';
-import { JobEntity, MessageTemplateEntity, NotificationStepEntity } from '@novu/dal';
+import {
+  EnvironmentRepository,
+  ExecutionDetailsRepository,
+  JobEntity,
+  JobRepository,
+  MessageRepository,
+  MessageTemplateEntity,
+  NotificationStepEntity,
+  SubscriberRepository,
+} from '@novu/dal';
+import { CreateExecutionDetails, FilterMessageMatcherService, IFilterVariables } from '@novu/application-generic';
 
 import { MessageMatcher } from './message-matcher.usecase';
 import type { SendMessageCommand } from '../send-message/send-message.command';
 
+let getFilterDataStub;
+let messageMatcher;
+
 describe('Message filter matcher', function () {
-  const createExecutionDetails = {
-    execute: sinon.stub(),
-  };
-  const messageMatcher = new MessageMatcher(
-    undefined as any,
-    createExecutionDetails as any,
-    undefined as any,
-    undefined as any,
-    undefined as any,
-    undefined as any
-  );
+  describe('Expected functionalities', () => {
+    beforeEach(() => {
+      messageMatcher = buildMessageMatcher(new SubscriberRepository());
+      getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+    });
 
-  it('should filter correct message by the filter value', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'firstVar',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 'firstVar',
-        },
-      }
-    );
+    afterEach(() => {
+      getFilterDataStub.restore();
+    });
 
-    expect(matchedMessage.passed).to.equal(true);
-  });
+    it('should filter correct message by the filter value', async function () {
+      const payload = {
+        varField: 'firstVar',
+      };
 
-  it('should match a message for AND filter group', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'firstVar',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'secondVar',
-            field: 'secondField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 'firstVar',
-          secondField: 'secondVar',
-        },
-      }
-    );
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should not match AND group for single bad item', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Title', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'firstVar',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'secondVar',
-            field: 'secondField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 'firstVar',
-          secondField: 'secondVarBad',
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(false);
-  });
-
-  it('should match a NOT_EQUAL for EQUAL var', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'firstVar',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-          {
-            operator: FieldOperatorEnum.NOT_EQUAL,
-            value: 'secondVar',
-            field: 'secondField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 'firstVar',
-          secondField: 'secondVarBad',
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should match a EQUAL for a boolean var', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: true,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should fall thru for no filters item', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({ step: makeStep('Correct Match 2', FieldLogicalOperatorEnum.OR, []) }),
-      {
-        payload: {
-          varField: 'firstVar',
-          secondField: 'secondVarBad',
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should get larger payload var then filter value', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.LARGER,
-            value: '0',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should get smaller payload var then filter value', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.SMALLER,
-            value: '3',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 0,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should get larger or equal payload var then filter value', async function () {
-    let matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.LARGER_EQUAL,
-            value: '0',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.LARGER_EQUAL,
-            value: '3',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-  it('should check if value is defined in payload', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.IS_DEFINED,
-            value: '',
-            field: 'emailMessage',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          emailMessage: '<b>This works</b>',
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should check if key is defined or not in subscriber data', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.IS_DEFINED,
-            value: '',
-            field: 'data.nestedKey',
-            on: FilterPartTypeEnum.SUBSCRIBER,
-          },
-        ]),
-      }),
-      {
-        subscriber: {
-          firstName: '',
-          lastName: '',
-          email: '',
-          subscriberId: '',
-          deleted: false,
-          createdAt: '',
-          updatedAt: '',
-          _id: '',
-          _organizationId: '',
-          _environmentId: '',
-          data: {
-            nested_Key: 'nestedValue',
-          },
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(false);
-  });
-
-  it('should get nested custom subscriber data', async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'nestedValue',
-            field: 'data.nestedKey',
-            on: FilterPartTypeEnum.SUBSCRIBER,
-          },
-        ]),
-      }),
-      {
-        subscriber: {
-          firstName: '',
-          lastName: '',
-          email: '',
-          subscriberId: '',
-          deleted: false,
-          createdAt: '',
-          updatedAt: '',
-          _id: '',
-          _organizationId: '',
-          _environmentId: '',
-          data: {
-            nestedKey: 'nestedValue',
-          },
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it("should return false with nested data that doesn't exist", async function () {
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'nestedValue',
-            field: 'data.nestedKey.doesNotExist',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          data: {
-            nestedKey: {
-              childKey: 'nestedValue',
-            },
-          },
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(false);
-  });
-
-  it('should get smaller or equal payload var then filter value', async function () {
-    let matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.SMALLER_EQUAL,
-            value: '3',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 0,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.SMALLER_EQUAL,
-            value: '3',
-            field: 'varField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-
-    expect(matchedMessage.passed).to.equal(true);
-  });
-
-  it('should handle now filters', async function () {
-    let matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: {
-          _templateId: '123',
-          template: {
-            subject: 'Test Subject',
-            type: StepTypeEnum.EMAIL,
-            name: '',
-            content: 'Test',
-            _organizationId: '123',
-            _environmentId: 'asdas',
-            _creatorId: '123',
-          } as MessageTemplateEntity,
-          filters: undefined,
-        },
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-    expect(matchedMessage.passed).to.equal(true);
-
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: {
-          _templateId: '123',
-          template: {
-            subject: 'Test Subject',
-            type: StepTypeEnum.EMAIL,
-            name: '',
-            content: 'Test',
-            _organizationId: '123',
-            _environmentId: 'asdas',
-            _creatorId: '123',
-          } as MessageTemplateEntity,
-          filters: [],
-        },
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-    expect(matchedMessage.passed).to.equal(true);
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: {
-          _templateId: '123',
-          template: {
-            subject: 'Test Subject',
-            type: StepTypeEnum.EMAIL,
-            name: '',
-            content: 'Test',
-            _organizationId: '123',
-            _environmentId: 'asdas',
-            _creatorId: '123',
-          } as MessageTemplateEntity,
-          filters: [
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
             {
-              isNegated: false,
-              type: 'GROUP',
-              value: FieldLogicalOperatorEnum.AND,
-              children: [],
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'firstVar',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
             },
-          ],
-        },
-      }),
-      {
-        payload: {
-          varField: 3,
-        },
-      }
-    );
-    expect(matchedMessage.passed).to.equal(true);
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: {
-          _templateId: '123',
-          template: {
-            subject: 'Test Subject',
-            type: StepTypeEnum.EMAIL,
-            name: '',
-            content: 'Test',
-            _organizationId: '123',
-            _environmentId: 'asdas',
-            _creatorId: '123',
-          } as MessageTemplateEntity,
-          filters: [
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should match a message for AND filter group', async function () {
+      const payload = {
+        varField: 'firstVar',
+        secondField: 'secondVar',
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
             {
-              isNegated: false,
-              type: 'GROUP',
-              value: FieldLogicalOperatorEnum.AND,
-              children: [],
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'firstVar',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
             },
-          ],
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'secondVar',
+              field: 'secondField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should not match AND group for single bad item', async function () {
+      const payload = {
+        varField: 'firstVar',
+        secondField: 'secondVarBad',
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Title', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'firstVar',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'secondVar',
+              field: 'secondField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(false);
+    });
+
+    it('should match a NOT_EQUAL for EQUAL var', async function () {
+      const payload = {
+        varField: 'firstVar',
+        secondField: 'secondVarBad',
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'firstVar',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+            {
+              operator: FieldOperatorEnum.NOT_EQUAL,
+              value: 'secondVar',
+              field: 'secondField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should match a EQUAL for a boolean var', async function () {
+      const payload = {
+        varField: true,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should fall thru for no filters item', async function () {
+      const payload = {
+        varField: 'firstVar',
+        secondField: 'secondVarBad',
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({ step: makeStep('Correct Match 2', FieldLogicalOperatorEnum.OR, []) })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should get larger payload var then filter value', async function () {
+      const payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.LARGER,
+              value: '0',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should get smaller payload var then filter value', async function () {
+      const payload = {
+        varField: 0,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.SMALLER,
+              value: '3',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should get larger or equal payload var then filter value', async function () {
+      let payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      let matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.LARGER_EQUAL,
+              value: '0',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+
+      payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.LARGER_EQUAL,
+              value: '3',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should check if value is defined in payload', async function () {
+      const payload = {
+        emailMessage: '<b>This works</b>',
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.IS_DEFINED,
+              value: '',
+              field: 'emailMessage',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should check if key is defined or not in subscriber data', async function () {
+      const subscriber = {
+        firstName: '',
+        lastName: '',
+        email: '',
+        subscriberId: '',
+        deleted: false,
+        createdAt: '',
+        updatedAt: '',
+        _id: '',
+        _organizationId: '',
+        _environmentId: '',
+        data: {
+          nested_Key: 'nestedValue',
         },
-      }),
-      {
-        payload: {
-          varField: 3,
+      };
+      getFilterDataStub.resolves({
+        subscriber,
+      });
+
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.IS_DEFINED,
+              value: '',
+              field: 'data.nestedKey',
+              on: FilterPartTypeEnum.SUBSCRIBER,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(false);
+    });
+
+    it('should get nested custom subscriber data', async function () {
+      const subscriber = {
+        firstName: '',
+        lastName: '',
+        email: '',
+        subscriberId: '',
+        deleted: false,
+        createdAt: '',
+        updatedAt: '',
+        _id: '',
+        _organizationId: '',
+        _environmentId: '',
+        data: {
+          nestedKey: 'nestedValue',
         },
-      }
-    );
-    expect(matchedMessage.passed).to.equal(true);
-  });
+      };
+      getFilterDataStub.resolves({
+        subscriber,
+      });
 
-  it('should handle webhook filter', async function () {
-    const gotGetStub = sinon.stub(axios, 'post').resolves(
-      Promise.resolve({
-        data: { varField: true },
-      })
-    );
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'nestedValue',
+              field: 'data.nestedKey',
+              on: FilterPartTypeEnum.SUBSCRIBER,
+            },
+          ]),
+        })
+      );
 
-    const matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', undefined, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.WEBHOOK,
-            webhookUrl: 'www.user.com/webhook',
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it(`should return false with nested data that doesn't exist`, async function () {
+      const payload = {
+        data: {
+          nestedKey: {
+            childKey: 'nestedValue',
           },
-        ]),
-      }),
-      {
-        payload: {},
-      }
-    );
+        },
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    expect(matchedMessage.passed).to.equal(true);
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'nestedValue',
+              field: 'data.nestedKey.doesNotExist',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
 
-    gotGetStub.restore();
-  });
+      expect(matchedMessage.passed).to.equal(false);
+    });
 
-  it('should skip async filter if child under OR returned true', async function () {
-    const gotGetStub = sinon.stub(axios, 'post').resolves(
-      Promise.resolve({
-        body: '{"varField":true}',
-      })
-    );
+    it('should get smaller or equal payload var then filter value', async function () {
+      let payload = {
+        varField: 0,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    let matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'payloadVarField',
-            on: FilterPartTypeEnum.PAYLOAD,
+      let matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.SMALLER_EQUAL,
+              value: '3',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+
+      payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.SMALLER_EQUAL,
+              value: '3',
+              field: 'varField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      expect(matchedMessage.passed).to.equal(true);
+    });
+
+    it('should handle now filters', async function () {
+      let payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      let matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: {
+            _templateId: '123',
+            template: {
+              subject: 'Test Subject',
+              type: StepTypeEnum.EMAIL,
+              name: '',
+              content: 'Test',
+              _organizationId: '123',
+              _environmentId: 'asdas',
+              _creatorId: '123',
+            } as MessageTemplateEntity,
+            filters: undefined,
           },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.WEBHOOK,
-            webhookUrl: 'www.user.com/webhook',
+        })
+      );
+      expect(matchedMessage.passed).to.equal(true);
+
+      payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: {
+            _templateId: '123',
+            template: {
+              subject: 'Test Subject',
+              type: StepTypeEnum.EMAIL,
+              name: '',
+              content: 'Test',
+              _organizationId: '123',
+              _environmentId: 'asdas',
+              _creatorId: '123',
+            } as MessageTemplateEntity,
+            filters: [],
           },
-        ]),
-      }),
-      {
-        payload: { payloadVarField: true },
-      }
-    );
+        })
+      );
+      expect(matchedMessage.passed).to.equal(true);
 
-    let requestsCount = gotGetStub.callCount;
+      payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    expect(requestsCount).to.equal(0);
-    expect(matchedMessage.passed).to.equal(true);
-
-    //Reorder children order to make sure it is not random
-
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.WEBHOOK,
-            webhookUrl: 'www.user.com/webhook',
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: {
+            _templateId: '123',
+            template: {
+              subject: 'Test Subject',
+              type: StepTypeEnum.EMAIL,
+              name: '',
+              content: 'Test',
+              _organizationId: '123',
+              _environmentId: 'asdas',
+              _creatorId: '123',
+            } as MessageTemplateEntity,
+            filters: [
+              {
+                isNegated: false,
+                type: 'GROUP',
+                value: FieldLogicalOperatorEnum.AND,
+                children: [],
+              },
+            ],
           },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'payloadVarField',
-            on: FilterPartTypeEnum.PAYLOAD,
+        })
+      );
+      expect(matchedMessage.passed).to.equal(true);
+
+      payload = {
+        varField: 3,
+      };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: {
+            _templateId: '123',
+            template: {
+              subject: 'Test Subject',
+              type: StepTypeEnum.EMAIL,
+              name: '',
+              content: 'Test',
+              _organizationId: '123',
+              _environmentId: 'asdas',
+              _creatorId: '123',
+            } as MessageTemplateEntity,
+            filters: [
+              {
+                isNegated: false,
+                type: 'GROUP',
+                value: FieldLogicalOperatorEnum.AND,
+                children: [],
+              },
+            ],
           },
-        ]),
-      }),
-      {
-        payload: { payloadVarField: true },
-      }
-    );
+        })
+      );
+      expect(matchedMessage.passed).to.equal(true);
+    });
 
-    requestsCount = gotGetStub.callCount;
+    it('should handle webhook filter', async function () {
+      const payload = {};
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    expect(requestsCount).to.equal(0);
-    expect(matchedMessage.passed).to.equal(true);
+      const gotGetStub = sinon.stub(axios, 'post').resolves(
+        Promise.resolve({
+          data: { varField: true },
+        })
+      );
 
-    gotGetStub.restore();
-  });
+      const matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', undefined, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.WEBHOOK,
+              webhookUrl: 'www.user.com/webhook',
+            },
+          ]),
+        })
+      );
 
-  it('should skip async filter if child under AND returned false', async function () {
-    const gotGetStub = sinon.stub(axios, 'post').resolves(
-      Promise.resolve({
-        body: '{"varField":true}',
-      })
-    );
+      expect(matchedMessage.passed).to.equal(true);
 
-    let matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'payloadVarField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.WEBHOOK,
-            webhookUrl: 'www.user.com/webhook',
-          },
-        ]),
-      }),
-      {
-        payload: { payloadVarField: false },
-      }
-    );
+      gotGetStub.restore();
+    });
 
-    let requestsCount = gotGetStub.callCount;
+    it('should skip async filter if child under OR returned true', async function () {
+      let payload = { payloadVarField: true };
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    expect(requestsCount).to.equal(0);
-    expect(matchedMessage.passed).to.equal(false);
+      const gotGetStub = sinon.stub(axios, 'post').resolves(
+        Promise.resolve({
+          body: JSON.stringify({ varField: true }),
+        })
+      );
 
-    //Reorder children order to make sure it is not random
+      let matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'payloadVarField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.WEBHOOK,
+              webhookUrl: 'www.user.com/webhook',
+            },
+          ]),
+        })
+      );
 
-    matchedMessage = await messageMatcher.filter(
-      sendMessageCommand({
-        step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'varField',
-            on: FilterPartTypeEnum.WEBHOOK,
-            webhookUrl: 'www.user.com/webhook',
-          },
-          {
-            operator: FieldOperatorEnum.EQUAL,
-            value: 'true',
-            field: 'payloadVarField',
-            on: FilterPartTypeEnum.PAYLOAD,
-          },
-        ]),
-      }),
-      {
-        payload: { payloadVarField: false },
-      }
-    );
+      let requestsCount = gotGetStub.callCount;
 
-    requestsCount = gotGetStub.callCount;
+      expect(requestsCount).to.equal(0);
+      expect(matchedMessage.passed).to.equal(true);
 
-    expect(requestsCount).to.equal(0);
-    expect(matchedMessage.passed).to.equal(false);
+      //Reorder children order to make sure it is not random
+      payload = { payloadVarField: true };
+      getFilterDataStub.resolves({
+        payload,
+      });
 
-    gotGetStub.restore();
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.OR, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.WEBHOOK,
+              webhookUrl: 'www.user.com/webhook',
+            },
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'payloadVarField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      requestsCount = gotGetStub.callCount;
+
+      expect(requestsCount).to.equal(0);
+      expect(matchedMessage.passed).to.equal(true);
+
+      gotGetStub.restore();
+    });
+
+    it('should skip async filter if child under AND returned false', async function () {
+      const gotGetStub = sinon.stub(axios, 'post').resolves(
+        Promise.resolve({
+          body: JSON.stringify({ varField: true }),
+        })
+      );
+
+      let payload = { payloadVarField: false };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      let matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'payloadVarField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.WEBHOOK,
+              webhookUrl: 'www.user.com/webhook',
+            },
+          ]),
+        })
+      );
+
+      let requestsCount = gotGetStub.callCount;
+
+      expect(requestsCount).to.equal(0);
+      expect(matchedMessage.passed).to.equal(false);
+
+      //Reorder children order to make sure it is not random
+      payload = { payloadVarField: false };
+      getFilterDataStub.resolves({
+        payload,
+      });
+
+      matchedMessage = await messageMatcher.execute(
+        sendMessageCommand({
+          step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'varField',
+              on: FilterPartTypeEnum.WEBHOOK,
+              webhookUrl: 'www.user.com/webhook',
+            },
+            {
+              operator: FieldOperatorEnum.EQUAL,
+              value: 'true',
+              field: 'payloadVarField',
+              on: FilterPartTypeEnum.PAYLOAD,
+            },
+          ]),
+        })
+      );
+
+      requestsCount = gotGetStub.callCount;
+
+      expect(requestsCount).to.equal(0);
+      expect(matchedMessage.passed).to.equal(false);
+
+      gotGetStub.restore();
+    });
   });
 
   describe('is online filters', () => {
-    const getSubscriber = (
-      { isOnline }: { isOnline?: boolean } = {},
-      { subDuration }: { subDuration?: Duration } = {}
-    ) => ({
-      firstName: 'John',
-      lastName: 'Doe',
-      isOnline: isOnline ?? true,
-      lastOnlineAt: subDuration ? sub(new Date(), subDuration).toISOString() : undefined,
+    afterEach(() => {
+      getFilterDataStub.restore();
     });
 
     describe('isOnline', () => {
       it('allows to process multiple filter parts', async () => {
-        const matcher = new MessageMatcher(
-          { findOne: () => Promise.resolve(getSubscriber()) } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: true })),
+        } as unknown as SubscriberRepository;
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+
+        const payload = { payloadVarField: true };
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -728,30 +789,24 @@ describe('Message filter matcher', function () {
                 on: FilterPartTypeEnum.PAYLOAD,
               },
             ]),
-          }),
-          {
-            payload: { payloadVarField: true },
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
-      it("doesn't allow to process if the subscriber has no online fields set and filter is true", async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () =>
-              Promise.resolve({
-                firstName: 'John',
-                lastName: 'Doe',
-              }),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+      it(`doesn't allow to process if the subscriber has no online fields set and filter is true`, async () => {
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber()),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -759,30 +814,24 @@ describe('Message filter matcher', function () {
                 value: true,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(false);
       });
 
-      it("doesn't allow to process if the subscriber has no online fields set and filter is false", async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () =>
-              Promise.resolve({
-                firstName: 'John',
-                lastName: 'Doe',
-              }),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+      it(`doesn't allow to process if the subscriber has no online fields set and filter is false`, async () => {
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber()),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -790,24 +839,24 @@ describe('Message filter matcher', function () {
                 value: false,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(false);
       });
 
       it('allows to process if the subscriber is online', async () => {
-        const matcher = new MessageMatcher(
-          { findOne: () => Promise.resolve(getSubscriber()) } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: true })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -815,24 +864,24 @@ describe('Message filter matcher', function () {
                 value: true,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
-      it("doesn't allow to process if the subscriber is not online", async () => {
-        const matcher = new MessageMatcher(
-          { findOne: () => Promise.resolve(getSubscriber({ isOnline: false })) } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+      it(`doesn't allow to process if the subscriber is not online`, async () => {
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: false })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -840,10 +889,7 @@ describe('Message filter matcher', function () {
                 value: true,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(false);
       });
@@ -851,17 +897,18 @@ describe('Message filter matcher', function () {
 
     describe('isOnlineInLast', () => {
       it('allows to process multiple filter parts', async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: true }, { subDuration: { minutes: 3 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: true }, { subDuration: { minutes: 3 } })),
+        } as unknown as SubscriberRepository;
+        const payload = { payloadVarField: true };
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -876,30 +923,24 @@ describe('Message filter matcher', function () {
                 on: FilterPartTypeEnum.PAYLOAD,
               },
             ]),
-          }),
-          {
-            payload: { payloadVarField: true },
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
-      it("doesn't allow to process if the subscriber with no online fields set", async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () =>
-              Promise.resolve({
-                firstName: 'John',
-                lastName: 'Doe',
-              }),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+      it(`doesn't allow to process if the subscriber with no online fields set`, async () => {
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber()),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -908,26 +949,24 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.MINUTES,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(false);
       });
 
       it('allows to process if the subscriber is still online', async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: true }, { subDuration: { minutes: 10 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: true }, { subDuration: { minutes: 10 } })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -936,26 +975,24 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.MINUTES,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
       it('allows to process if the subscriber was online in last 5 min', async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 4 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 4 } })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -964,26 +1001,24 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.MINUTES,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
-      it("doesn't allow to process if the subscriber was online more that last 5 min", async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 6 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+      it(`doesn't allow to process if the subscriber was online more that last 5 min`, async () => {
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 6 } })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -992,26 +1027,24 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.MINUTES,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(false);
       });
 
       it('allows to process if the subscriber was online in last 1 hour', async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 30 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { minutes: 30 } })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -1020,26 +1053,24 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.HOURS,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
 
       it('allows to process if the subscriber was online in last 1 day', async () => {
-        const matcher = new MessageMatcher(
-          {
-            findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { hours: 23 } })),
-          } as any,
-          createExecutionDetails as any,
-          undefined as any,
-          undefined as any,
-          undefined as any,
-          undefined as any
-        );
-        const matchedMessage = await matcher.filter(
+        const mockSubscriberRepository = {
+          findOne: () => Promise.resolve(getSubscriber({ isOnline: false }, { subDuration: { hours: 23 } })),
+        } as unknown as SubscriberRepository;
+        const payload = {};
+
+        messageMatcher = buildMessageMatcher(mockSubscriberRepository);
+        getFilterDataStub = sinon.stub(messageMatcher, 'getFilterData');
+        getFilterDataStub.resolves({
+          payload,
+        });
+
+        const matchedMessage = await messageMatcher.execute(
           sendMessageCommand({
             step: makeStep('Correct Match', FieldLogicalOperatorEnum.AND, [
               {
@@ -1048,107 +1079,40 @@ describe('Message filter matcher', function () {
                 timeOperator: TimeOperatorEnum.DAYS,
               },
             ]),
-          }),
-          {
-            payload: {},
-          }
+          })
         );
         expect(matchedMessage.passed).to.equal(true);
       });
     });
   });
+});
 
-  describe('it summarize used filters based on condition', () => {
-    it('should add a passed condition', () => {
-      const result = MessageMatcher.sumFilters(
-        {
-          filters: [],
-          failedFilters: [],
-          passedFilters: ['payload'],
-        },
-        {
-          filter: FILTER_TO_LABEL.payload,
-          field: '',
-          expected: '',
-          actual: '',
-          operator: FieldOperatorEnum.LARGER,
-          passed: true,
-        }
-      );
+const buildMessageMatcher = (subscriberRepository: SubscriberRepository): MessageMatcher => {
+  const createExecutionDetails = {
+    execute: sinon.stub(),
+  };
 
-      expect(result.passedFilters).to.contain('payload');
-      expect(result.passedFilters.length).to.eq(1);
-      expect(result.filters.length).to.eq(1);
-      expect(result.filters).to.contain('payload');
-    });
+  const filterMessageMatcherService = new FilterMessageMatcherService();
 
-    it('should add a failed condition', () => {
-      const result = MessageMatcher.sumFilters(
-        {
-          filters: [],
-          failedFilters: [],
-          passedFilters: [],
-        },
-        {
-          filter: FILTER_TO_LABEL.payload,
-          field: '',
-          expected: '',
-          actual: '',
-          operator: FieldOperatorEnum.LARGER,
-          passed: false,
-        }
-      );
+  return new MessageMatcher(
+    subscriberRepository,
+    createExecutionDetails as unknown as CreateExecutionDetails,
+    undefined as unknown as EnvironmentRepository,
+    filterMessageMatcherService,
+    undefined as unknown as ExecutionDetailsRepository,
+    undefined as unknown as MessageRepository,
+    undefined as unknown as JobRepository
+  );
+};
 
-      expect(result.failedFilters).to.contain('payload');
-      expect(result.failedFilters.length).to.eq(1);
-      expect(result.filters.length).to.eq(1);
-      expect(result.filters).to.contain('payload');
-    });
-
-    it('should add online for both cases of online', () => {
-      let result = MessageMatcher.sumFilters(
-        {
-          filters: [],
-          failedFilters: [],
-          passedFilters: [],
-        },
-        {
-          filter: FILTER_TO_LABEL.isOnlineInLast,
-          field: '',
-          expected: '',
-          actual: '',
-          operator: FieldOperatorEnum.LARGER,
-          passed: true,
-        }
-      );
-
-      expect(result.passedFilters).to.contain('online');
-      expect(result.passedFilters.length).to.eq(1);
-      expect(result.filters.length).to.eq(1);
-      expect(result.filters).to.contain('online');
-
-      result = MessageMatcher.sumFilters(
-        {
-          filters: [],
-          failedFilters: [],
-          passedFilters: [],
-        },
-        {
-          filter: FILTER_TO_LABEL.isOnline,
-          field: '',
-          expected: '',
-          actual: '',
-          operator: FieldOperatorEnum.LARGER,
-          passed: true,
-        }
-      );
-
-      expect(result.passedFilters).to.contain('online');
-      expect(result.passedFilters.length).to.eq(1);
-      expect(result.filters.length).to.eq(1);
-      expect(result.filters).to.contain('online');
-    });
-  });
+const getSubscriber = (
+  { isOnline }: { isOnline?: boolean } = {},
+  { subDuration }: { subDuration?: Duration } = {}
+) => ({
+  firstName: 'John',
+  lastName: 'Doe',
+  ...(isOnline && { isOnline: isOnline ?? true }),
+  ...(subDuration && { lastOnlineAt: subDuration ? sub(new Date(), subDuration).toISOString() : undefined }),
 });
 
 function makeStep(

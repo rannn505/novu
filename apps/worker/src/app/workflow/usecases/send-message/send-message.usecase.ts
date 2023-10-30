@@ -69,12 +69,6 @@ export class SendMessage {
     const stepType = command.step?.template?.type;
 
     if (!command.payload?.$on_boarding_trigger) {
-      const usedFilters = shouldRun.conditions.reduce(MessageMatcher.sumFilters, {
-        filters: [],
-        failedFilters: [],
-        passedFilters: [],
-      });
-
       const digest = command.job.digest;
       let timedInfo: any = {};
 
@@ -104,7 +98,7 @@ export class SendMessage {
         ...timedInfo,
         filterPassed: shouldRun,
         preferencesPassed: preferred,
-        ...(usedFilters || {}),
+        ...(shouldRun.usedFilters || {}),
         source: command.payload.__source || 'api',
       });
     }
@@ -159,9 +153,7 @@ export class SendMessage {
       identifier: command.job.identifier,
     });
 
-    const data = await this.matchMessage.getFilterData(messageMatcherCommand);
-
-    const shouldRun = await this.matchMessage.filter(messageMatcherCommand, data);
+    const shouldRun = await this.matchMessage.execute(messageMatcherCommand);
 
     if (!shouldRun.passed) {
       await this.createExecutionDetails.execute(
@@ -173,7 +165,7 @@ export class SendMessage {
           isTest: false,
           isRetry: false,
           raw: JSON.stringify({
-            payload: data,
+            payload: shouldRun.data,
             filters: command.step.filters,
           }),
         })

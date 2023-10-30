@@ -39,9 +39,9 @@ export class QueueNextJob {
         organizationId: job._organizationId,
         subscriberId: job.subscriberId,
         identifier: job.identifier,
+        prefiltering: true,
       });
-      const payload = await this.messageMatcher.getFilterData(messageMatcherCommand);
-      const shouldRun = await this.messageMatcher.filter(messageMatcherCommand, payload, true);
+      const shouldRun = await this.messageMatcher.execute(messageMatcherCommand);
 
       filtered = !shouldRun.passed;
     }

@@ -1,23 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { StepFilter } from '@novu/dal';
 import { FilterParts, FilterPartTypeEnum, ICondition } from '@novu/shared';
-import { Filter } from '../../utils/filter';
+
 import {
   FilterProcessingDetails,
+  FilterService,
   IFilterVariables,
-} from '../../utils/filter-processing-details';
-import { ConditionsFilterCommand } from './conditions-filter.command';
+} from './filters.service';
 
 @Injectable()
-export class ConditionsFilter extends Filter {
+export class FilterConditionsService extends FilterService {
   public async filter(
-    command: ConditionsFilterCommand,
+    filters: StepFilter[],
     variables: IFilterVariables
   ): Promise<{
     passed: boolean;
     conditions: ICondition[];
   }> {
-    const { filters } = command;
     if (!filters || !Array.isArray(filters) || filters.length === 0) {
       return {
         passed: true,

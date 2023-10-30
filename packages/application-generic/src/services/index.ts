@@ -1,6 +1,13 @@
 export * from './in-memory-provider';
 export * from './launch-darkly.service';
 export * from './feature-flags.service';
+export {
+  FilterConditionsService,
+  FilterMessageMatcherService,
+  FilterProcessingDetails,
+  IFilterVariables,
+  IUsedFilters,
+} from './filters';
 export * from './cache';
 export * from './queues';
 export * from './workers';

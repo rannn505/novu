@@ -1,6 +1,6 @@
-import { IsDefined, IsString } from 'class-validator';
+import { IsBoolean, IsDefined, IsOptional, IsString } from 'class-validator';
 import { NotificationStepEntity, JobEntity } from '@novu/dal';
-import { EnvironmentWithUserCommand } from '@novu/application-generic';
+import { EnvironmentWithUserCommand, IFilterVariables } from '@novu/application-generic';
 
 export class MessageMatcherCommand extends EnvironmentWithUserCommand {
   @IsDefined()
@@ -22,4 +22,8 @@ export class MessageMatcherCommand extends EnvironmentWithUserCommand {
 
   @IsDefined()
   job: JobEntity;
+
+  @IsOptional()
+  @IsBoolean()
+  prefiltering?: boolean;
 }

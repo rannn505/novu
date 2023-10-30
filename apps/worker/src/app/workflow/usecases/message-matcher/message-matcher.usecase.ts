@@ -20,29 +20,36 @@ import {
   FieldOperatorEnum,
 } from '@novu/shared';
 import {
-  SubscriberEntity,
   EnvironmentRepository,
+  ExecutionDetailsRepository,
+  JobEntity,
+  JobRepository,
+  MessageRepository,
+  SubscriberEntity,
   SubscriberRepository,
   StepFilter,
-  ExecutionDetailsRepository,
-  MessageRepository,
-  JobRepository,
 } from '@novu/dal';
 import {
-  DetailEnum,
-  CreateExecutionDetails,
-  CreateExecutionDetailsCommand,
   buildSubscriberKey,
   CachedEntity,
-  Instrument,
-  Filter,
+  CreateExecutionDetails,
+  CreateExecutionDetailsCommand,
+  DetailEnum,
+  FilterMessageMatcherService,
   FilterProcessingDetails,
   IFilterVariables,
+  Instrument,
+  IUsedFilters,
 } from '@novu/application-generic';
 import { EmailEventStatusEnum } from '@novu/stateless';
 
 import { EXCEPTION_MESSAGE_ON_WEBHOOK_FILTER, createHash, PlatformException } from '../../../shared/utils';
 import { MessageMatcherCommand } from './message-matcher.command';
+
+interface IFilterData {
+  subscriber?: SubscriberEntity;
+  payload?: any;
+}
 
 const differenceIn = (currentDate: Date, lastDate: Date, timeOperator: TimeOperatorEnum) => {
   if (timeOperator === TimeOperatorEnum.MINUTES) {
@@ -57,119 +64,94 @@ const differenceIn = (currentDate: Date, lastDate: Date, timeOperator: TimeOpera
 };
 
 @Injectable()
-export class MessageMatcher extends Filter {
+export class MessageMatcher {
   constructor(
     private subscriberRepository: SubscriberRepository,
     private createExecutionDetails: CreateExecutionDetails,
     private environmentRepository: EnvironmentRepository,
+    public filterMessageMatcher: FilterMessageMatcherService,
     private executionDetailsRepository: ExecutionDetailsRepository,
     private messageRepository: MessageRepository,
     private jobRepository: JobRepository
-  ) {
-    super();
-  }
+  ) {}
 
-  public async filter(
-    command: MessageMatcherCommand,
-    variables: IFilterVariables,
-    prefiltering = false
-  ): Promise<{
+  async execute(command: MessageMatcherCommand): Promise<{
     passed: boolean;
+    data: IFilterData;
     conditions: ICondition[];
+    usedFilters: IUsedFilters;
   }> {
+    const data = await this.getFilterData(command);
+
     const { step } = command;
-    if (!step?.filters || !Array.isArray(step?.filters)) {
+
+    let conditions: ICondition[] = [];
+    if (!step?.filters || !Array.isArray(step?.filters) || step.filters.length === 0) {
       return {
         passed: true,
-        conditions: [],
+        data,
+        conditions,
+        usedFilters: this.getUsedFilters(conditions),
       };
     }
-    if (step.filters?.length) {
-      const details: FilterProcessingDetails[] = [];
 
-      const foundFilter = await this.findAsync(step.filters, async (filter) => {
-        const filterProcessingDetails = new FilterProcessingDetails();
-        filterProcessingDetails.addFilter(filter, variables);
+    const details: FilterProcessingDetails[] = [];
+    const foundFilter = await this.filterMessageMatcher.findAsync(step.filters, async (filter) => {
+      const filterProcessingDetails = new FilterProcessingDetails();
+      filterProcessingDetails.addFilter(filter, data);
 
-        const children = filter.children;
-        const noRules = !children || (Array.isArray(children) && children.length === 0);
-        if (noRules) {
-          return true;
-        }
+      const children = filter.children;
+      const noRules = !children || (Array.isArray(children) && children.length === 0);
+      if (noRules) {
+        return true;
+      }
 
-        const singleRule = !children || (Array.isArray(children) && children.length === 1);
-        if (singleRule) {
-          const result = await this.processFilter(variables, children[0], command, filterProcessingDetails);
-          if (!prefiltering) {
-            await this.createExecutionDetails.execute(
-              CreateExecutionDetailsCommand.create({
-                ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
-                detail: DetailEnum.PROCESSING_STEP_FILTER,
-                source: ExecutionDetailsSourceEnum.INTERNAL,
-                status: ExecutionDetailsStatusEnum.PENDING,
-                isTest: false,
-                isRetry: false,
-                raw: filterProcessingDetails.toString(),
-              })
-            );
-          }
+      const singleRule = Array.isArray(children) && children.length === 1;
+      const result = singleRule
+        ? await this.processFilter(data, children[0], command, filterProcessingDetails)
+        : await this.handleGroupFilters(filter, data, command, filterProcessingDetails);
 
-          details.push(filterProcessingDetails);
+      if (!command.prefiltering) {
+        await this.sendExecutionDetails(command.job, filterProcessingDetails);
+      }
 
-          return result;
-        }
+      details.push(filterProcessingDetails);
 
-        const result = await this.handleGroupFilters(filter, variables, command, filterProcessingDetails);
-        if (!prefiltering) {
-          await this.createExecutionDetails.execute(
-            CreateExecutionDetailsCommand.create({
-              ...CreateExecutionDetailsCommand.getDetailsFromJob(command.job),
-              detail: DetailEnum.PROCESSING_STEP_FILTER,
-              source: ExecutionDetailsSourceEnum.INTERNAL,
-              status: ExecutionDetailsStatusEnum.PENDING,
-              isTest: false,
-              isRetry: false,
-              raw: filterProcessingDetails.toString(),
-            })
-          );
-        }
+      return result;
+    });
 
-        details.push(filterProcessingDetails);
-
-        return result;
-      });
-
-      const conditions = details
-        .map((detail) => detail.toObject().conditions)
-        .reduce((conditionsArray, collection) => [...collection, ...conditionsArray], []);
-
-      return {
-        passed: !!foundFilter,
-        conditions: conditions,
-      };
-    }
+    conditions = details
+      .map((detail) => detail.toObject().conditions)
+      .reduce((conditionsArray, collection) => [...collection, ...conditionsArray], []);
 
     return {
-      passed: true,
-      conditions: [],
+      passed: !!foundFilter,
+      data,
+      conditions,
+      usedFilters: this.getUsedFilters(conditions),
     };
   }
 
-  public static sumFilters(
-    summary: {
-      filters: string[];
-      failedFilters: string[];
-      passedFilters: string[];
-    },
-    condition: ICondition
-  ) {
-    let type: string = condition.filter?.toLowerCase();
+  private getUsedFilters(conditions: ICondition[]): IUsedFilters {
+    return conditions.reduce(this.filterMessageMatcher.sumFilters, {
+      filters: [],
+      failedFilters: [],
+      passedFilters: [],
+    });
+  }
 
-    if (condition.filter === FILTER_TO_LABEL.isOnline || condition.filter === FILTER_TO_LABEL.isOnlineInLast) {
-      type = 'online';
-    }
-
-    return Filter.sumFilters(summary, condition, type);
+  private async sendExecutionDetails(job: JobEntity, filterProcessingDetails: FilterProcessingDetails): Promise<void> {
+    await this.createExecutionDetails.execute(
+      CreateExecutionDetailsCommand.create({
+        ...CreateExecutionDetailsCommand.getDetailsFromJob(job),
+        detail: DetailEnum.PROCESSING_STEP_FILTER,
+        source: ExecutionDetailsSourceEnum.INTERNAL,
+        status: ExecutionDetailsStatusEnum.PENDING,
+        isTest: false,
+        isRetry: false,
+        raw: filterProcessingDetails.toString(),
+      })
+    );
   }
 
   private async handleGroupFilters(
@@ -182,7 +164,7 @@ export class MessageMatcher extends Filter {
       return await this.handleOrFilters(filter, variables, command, filterProcessingDetails);
     }
 
-    if (filter.value === 'AND') {
+    if (filter.value === FieldLogicalOperatorEnum.AND) {
       return await this.handleAndFilters(filter, variables, command, filterProcessingDetails);
     }
 
@@ -190,9 +172,9 @@ export class MessageMatcher extends Filter {
   }
 
   private splitFilters(filter: StepFilter) {
-    const webhookFilters = filter.children.filter((childFilter) => childFilter.on === 'webhook');
+    const webhookFilters = filter.children.filter((childFilter) => childFilter.on === FilterPartTypeEnum.WEBHOOK);
 
-    const otherFilters = filter.children.filter((childFilter) => childFilter.on !== 'webhook');
+    const otherFilters = filter.children.filter((childFilter) => childFilter.on !== FilterPartTypeEnum.WEBHOOK);
 
     return { webhookFilters, otherFilters };
   }
@@ -205,14 +187,14 @@ export class MessageMatcher extends Filter {
   ): Promise<boolean> {
     const { webhookFilters, otherFilters } = this.splitFilters(filter);
 
-    const matchedOtherFilters = await this.filterAsync(otherFilters, (i) =>
+    const matchedOtherFilters = await this.filterMessageMatcher.filterAsync(otherFilters, (i) =>
       this.processFilter(variables, i, command, filterProcessingDetails)
     );
     if (otherFilters.length !== matchedOtherFilters.length) {
       return false;
     }
 
-    const matchedWebhookFilters = await this.filterAsync(webhookFilters, (i) =>
+    const matchedWebhookFilters = await this.filterMessageMatcher.filterAsync(webhookFilters, (i) =>
       this.processFilter(variables, i, command, filterProcessingDetails)
     );
 
@@ -227,14 +209,14 @@ export class MessageMatcher extends Filter {
   ): Promise<boolean> {
     const { webhookFilters, otherFilters } = this.splitFilters(filter);
 
-    const foundFilter = await this.findAsync(otherFilters, (i) =>
+    const foundFilter = await this.filterMessageMatcher.findAsync(otherFilters, (i) =>
       this.processFilter(variables, i, command, filterProcessingDetails)
     );
     if (foundFilter) {
       return true;
     }
 
-    return !!(await this.findAsync(webhookFilters, (i) =>
+    return !!(await this.filterMessageMatcher.findAsync(webhookFilters, (i) =>
       this.processFilter(variables, i, command, filterProcessingDetails)
     ));
   }
@@ -466,11 +448,15 @@ export class MessageMatcher extends Filter {
       if (process.env.NODE_ENV === 'test') return true;
 
       const res = await this.getWebhookResponse(child, variables, command);
-      passed = this.processFilterEquality({ payload: undefined, webhook: res }, child, filterProcessingDetails);
+      passed = this.filterMessageMatcher.processFilterEquality(
+        { payload: undefined, webhook: res },
+        child,
+        filterProcessingDetails
+      );
     }
 
     if (child.on === FilterPartTypeEnum.PAYLOAD || child.on === FilterPartTypeEnum.SUBSCRIBER) {
-      passed = this.processFilterEquality(variables, child, filterProcessingDetails);
+      passed = this.filterMessageMatcher.processFilterEquality(variables, child, filterProcessingDetails);
     }
 
     if (child.on === FilterPartTypeEnum.IS_ONLINE || child.on === FilterPartTypeEnum.IS_ONLINE_IN_LAST) {
@@ -485,7 +471,7 @@ export class MessageMatcher extends Filter {
   }
 
   @Instrument()
-  public async getFilterData(command: MessageMatcherCommand) {
+  public async getFilterData(command: MessageMatcherCommand): Promise<IFilterData> {
     const subscriberFilterExist = command.step?.filters?.find((filter) => {
       return filter?.children?.find((item) => item?.on === 'subscriber');
     });
